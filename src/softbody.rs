@@ -25,9 +25,10 @@ pub fn demo() {
 
     let mut bunny = RenderSoftBody::new_bunny();
     let mut gui = three_d::GUI::new(&context);
-    let mut niter = 1;
+    let mut niter = 4;
     let mut edge_comp = 0.03;
     let mut vol_comp = 0.0;
+    let mut g = 3.0;
 
     window.render_loop(move |mut frame_input: FrameInput| {
         let mut panel_width = 0.0;
@@ -41,10 +42,15 @@ pub fn demo() {
                 SidePanel::left("side_panel").show(gui_context, |ui| {
                     use three_d::egui::*;
                     ui.heading("Softbody simulation");
-                    ui.add(Label::new("A simple softbody solver, using semi-implicit Euler integration and Gauss-Seidel constraint solving"));
+                    ui.add(Label::new("
+                        A simple softbody solver, using semi-implicit Euler integration and Gauss-Seidel constraint solving.
+                        Notice how high edge-compliance (more than jelly) can be quite unstable
+                        Notice how a higher number of iteration (sub-stepping) makes the system more stable andstiffer (a low number of iterations makes interactions with the gound more extreme and introduces aritifial compliance)
+                        "));
                     ui.add(Slider::new(&mut niter, 1..=30).text("Number of physics iterations per frame"));
-                    ui.add(Slider::new(&mut edge_comp, 0.0..=2.0).text("Edge \"stretch\" compliance (unit?)"));
-                    ui.add(Slider::new(&mut vol_comp, 0.0..=0.01).text("Volume \"squash\" compliance (unit?)"));
+                    ui.add(Slider::new(&mut edge_comp, 0.0..=1.0).text("Edge \"stretch\" compliance"));
+                    ui.add(Slider::new(&mut vol_comp, 0.0..=0.001).text("Volume \"squash\" compliance"));
+                    ui.add(Slider::new(&mut g, 0.0..=50.).text("Gravity (m/s²)"));
                 });
                 panel_width = gui_context.used_rect().width() as f64;
             },
@@ -52,7 +58,7 @@ pub fn demo() {
 
         bunny.update_physics(|body| {
             for _ in 0..niter {
-                update_softbody(body, 1./(30.*niter as f32), edge_comp, vol_comp);
+                update_softbody(body, 1./(30.*niter as f32), edge_comp, vol_comp, g);
             }
         });
         bunny.mesh.compute_normals();
@@ -181,8 +187,8 @@ struct SoftBody {
     pub tetras_rest_vols: Vec<f32>,
 }
 
-fn update_softbody(body: &mut SoftBody, dt: f32, e_comp: f32, v_comp: f32) {
-    gravity_and_ground(body, dt, Vec3f::new(0., -9.81/8., 0.));
+fn update_softbody(body: &mut SoftBody, dt: f32, e_comp: f32, v_comp: f32, g: f32) {
+    gravity_and_ground(body, dt, Vec3f::new(0., -g, 0.));
     solve_edges(body, dt, e_comp);
     solve_volumes(body, dt, v_comp);
     // Order :
@@ -196,16 +202,18 @@ fn update_softbody(body: &mut SoftBody, dt: f32, e_comp: f32, v_comp: f32) {
 
 fn gravity_and_ground(body: &mut SoftBody, dt: f32, g: Vec3f) {
     for (x, v) in iter::zip(&mut body.positions, &mut body.speeds) {
-        let g = vec3(0.,2., 0.) - *x;
-        let g = g / 100.;
+        // for convenience, also bring gravity towards the middle
+        let g = g - g.magnitude() * x.normalize() / 5.; 
         *v += dt * g;
         let xprev = *x;
         *x += dt * *v;
+
         if x.y < 0.1 {
             *x = xprev;
             x.y = 0.1;
-            v.y = 0.0; // no rebond ?
-            *v *= 0.1; // MEH, friction artificielle
+            v.y = (x.y - xprev.y) / dt;
+            //v.y = 0.0; // no rebond
+            *v *= 0.8; // friction artificielle
         }
     }
 }
